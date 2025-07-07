@@ -39,6 +39,7 @@ const buttonStyles = {
 
 const PopUp: React.FC<PopUpProps> = ({ open, onClose }) => {
   const [subject, setSubject] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [description, setDescription] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [emailFollowUp, setEmailFollowUp] = useState(false);
@@ -48,8 +49,8 @@ const PopUp: React.FC<PopUpProps> = ({ open, onClose }) => {
 
   // Handle File Upload
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      setFiles([...files, ...Array.from(event.target.files)]);
+    if (event.target.files && event.target.files.length > 0) {
+      setFiles([event.target.files[0]]); // Only allow one file
     }
   };
 
@@ -82,6 +83,7 @@ const PopUp: React.FC<PopUpProps> = ({ open, onClose }) => {
       );
       return;
     }
+    setSubmitting(true);
 
     // Creating FormData object for file uploads
     const formData = new FormData();
@@ -107,6 +109,8 @@ const PopUp: React.FC<PopUpProps> = ({ open, onClose }) => {
     } catch (error) {
       console.error("Error submitting feedback:", error);
       setErrorMessage("Submission failed. Please try again.");
+    } finally {
+      setSubmitting(false); // <-- Add this (so user can retry if failed)
     }
   };
 
@@ -144,7 +148,9 @@ const PopUp: React.FC<PopUpProps> = ({ open, onClose }) => {
         </DialogContent>
       ) : (
         <>
-           <DialogTitle sx={{ borderRadius: "16px", padding: "16px", color: "white" }}>
+          <DialogTitle
+            sx={{ borderRadius: "16px", padding: "16px", color: "white" }}
+          >
             Submit Feedback
             <IconButton
               onClick={onClose}
@@ -163,7 +169,7 @@ const PopUp: React.FC<PopUpProps> = ({ open, onClose }) => {
 
           <DialogContent ref={contentRef}>
             {/* Subject Input */}
-            
+
             <TextField
               label="Subject"
               fullWidth
@@ -194,7 +200,11 @@ const PopUp: React.FC<PopUpProps> = ({ open, onClose }) => {
 
             {/* Box enclosing Choose File button */}
             <Box mt={1} p={2} border="1px solid #ccc" borderRadius="16px">
-              <Button sx={buttonStyles} component="label">
+              <Button
+                sx={buttonStyles}
+                component="label"
+                disabled={files.length >= 1}
+              >
                 Choose File
                 <input type="file" hidden onChange={handleFileChange} />
               </Button>
@@ -251,6 +261,11 @@ const PopUp: React.FC<PopUpProps> = ({ open, onClose }) => {
               sx={{ ...buttonStyles, color: "#007BFF" }}
               onClick={handleSubmit}
               variant="contained"
+              disabled={
+                submitting || // Disable while submitting
+                !subject.trim() || // Disable if subject is empty
+                !description.trim() // Disable if description is empty
+              }
             >
               Submit
             </Button>
