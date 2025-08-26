@@ -1,41 +1,58 @@
-// helpers/analyzePrompt.ts
-// Small helper to call your Prompt Analyzer via the internal path.
-// Only dynamic field is session_id. Everything else mirrors your screenshot.
+// src/helpers/analyzePrompt.ts
+// Calls your internal Prompt Analyzer endpoint.
+// Only dynamic field: session_id. Uses your context helpers.
 
-import { saveData } from "@/utils/saveData"; // <-- adjust import path if needed
+export type AnalyzerDeps = {
+  saveData: (url: string, body?: any) => Promise<any>;
+  fetchData: (url: string, params?: Record<string, any>) => Promise<any>;
+};
 
-export async function analyzePrompt(sessionId: number | string): Promise<string> {
-  // Request body per your Swagger screenshot
+export async function analyzePrompt(
+  sessionId: number | string,
+  { saveData, fetchData }: AnalyzerDeps
+): Promise<string> {
+  // Payload matches your Swagger screenshot
   const payload = {
     engine: "anthropic.claude-3-5-sonnet-v1.0",
     temperature: 0.7,
     max_tokens: 90,
-    session_id: sessionId,   // ← dynamic
+    session_id: sessionId, // ← ONLY dynamic field
     output_tokens: 90,
   };
 
-  // Use the same internal style you used for completion:
-  // saveData("/auth/service/completion", payload)
-  const response: any = await saveData(
+  // 1) POST via saveData to your internal path
+  const postRes: any = await saveData(
     "/auth/service/prompt_analyzer?genai_request=true",
     payload
   );
 
-  // Your saveData pattern often wraps payload under response.data.data
-  const data =
-    response?.data?.data ??
-    response?.data ??
-    response ??
-    {};
+  // Try common response shapes first
+  const fromPost =
+    postRes?.data?.data?.result?.messages?.[0]?.content ??
+    postRes?.data?.result?.messages?.[0]?.content ??
+    postRes?.result?.messages?.[0]?.content ??
+    postRes?.data?.message ??
+    postRes?.message;
 
-  // Most common shapes observed in your responses:
-  // { result: { messages: [{ content: "..." }] } }
-  // Fallbacks provided so UI won't break if the shape varies.
-  const text =
-    data?.result?.messages?.[0]?.content ??
-    data?.messages?.[0]?.content ??
-    data?.message ??
-    "";
+  if (typeof fromPost === "string" && fromPost.trim()) return fromPost;
 
-  return typeof text === "string" ? text : "";
+  // 2) Optional fallback GET (some envs return an ACK then require a query)
+  try {
+    const getRes: any = await fetchData("/auth/service/prompt_analyzer", {
+      session_id: sessionId,
+    });
+
+    const fromGet =
+      getRes?.data?.data?.result?.messages?.[0]?.content ??
+      getRes?.data?.result?.messages?.[0]?.content ??
+      getRes?.result?.messages?.[0]?.content ??
+      getRes?.data?.message ??
+      getRes?.message ??
+      "";
+
+    return typeof fromGet === "string" ? fromGet : "";
+  } catch {
+    return "";
+  }
 }
+
