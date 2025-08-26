@@ -1,0 +1,138 @@
+import React, { useState } from "react";
+import { Box, Typography } from "@mui/material";
+// ⬇️ import the API helper
+import { analyzePrompt } from "@/api/promptAnalyzer";
+
+// ...your other imports stay as they are...
+
+export default function Chat() {
+  // =================== NEW STATE ===================
+  // Stores the text returned by the Prompt Analyzer to display in the banner
+  const [recommendedToolText, setRecommendedToolText] = useState<string>("");
+  // =================================================
+
+  // ... all your other state, refs, and helpers remain unchanged ...
+
+  // -------------------------------------------------
+  // Your existing handleSubmit (only the modified, complete skeleton is shown)
+  // -------------------------------------------------
+  const handleSubmit = async (/* your params here */) => {
+    try {
+      // ... your existing code before generateChatParams ...
+
+      // You already have this call; it returns things incl. session_id.
+      // Keep your existing destructure — only important piece for us is `session_id`.
+      const {
+        engine,
+        temperature,
+        session_id,
+        chatSessionType,
+        message,
+        max_tokens,
+        // ... (whatever else you already destructure)
+      } = await generateChatParams(
+        userInput,
+        tokenInPrompt,
+        currentSessionModel?.vision || false,
+        !!files && files.length !== 0 ? true : false,
+        images,
+        summarizeDocument,
+        compareDocuments,
+        resFiles
+      );
+
+      // =================== NEW: CALL PROMPT ANALYZER ===================
+      // Run the analyzer on every submit. We await it so banner updates as soon as we have text.
+      // (All payload fields except session_id are hard-coded in analyzePrompt)
+      try {
+        const text = await analyzePrompt(session_id);
+        setRecommendedToolText(text || "");
+      } catch {
+        setRecommendedToolText("");
+      }
+      // ================= END NEW: CALL PROMPT ANALYZER ==================
+
+      // ⬇️ Keep your original guard as-is; we’re calling analyzer just before this line
+      if (max_tokens === 0) {
+        setAlertMessage({
+          severity: "error",
+          message:
+            "Prompt text is too long, kindly shorten the prompt message.",
+        });
+        return;
+      }
+
+      // ...the rest of your existing handleSubmit logic (sending chat, UI updates, etc.)...
+    } catch (err) {
+      // your existing error handling
+    }
+  };
+
+  // -------------------------------------------------
+  // RENDER
+  // -------------------------------------------------
+  return (
+    <>
+      {/* ... everything above your suggestions section stays identical ... */}
+
+      <Box style={{ position: "relative", width: "100%" }}>
+        {messages.length === 0 &&
+          !showFileUpload &&
+          !historyLoading &&
+          selectedFiles.length === 0 && (
+            <ChatExamples exampleAnalytics={exampleAnalytics} />
+          )}
+
+        {/* =================== NEW: Recommended Tool banner =================== */}
+        {!!recommendedToolText && (
+          <Box
+            sx={{
+              maxWidth: "calc(60vw + 139px)",
+              margin: "0 auto",
+              "@media (max-width: 900px)": { maxWidth: "100%" },
+              mb: "0.5em",
+            }}
+          >
+            <Typography
+              sx={{
+                fontSize: "12px",
+                fontWeight: 700,
+                lineHeight: "16.34px",
+                textAlign: "left",
+                color: "#3578FF",
+                mb: "0.25em",
+              }}
+            >
+              Recommended Tool
+            </Typography>
+
+            <Box
+              sx={{
+                fontSize: "13px",
+                lineHeight: "18px",
+                border: "1px solid #e5e7eb",
+                borderRadius: "10px",
+                padding: "0.6em 0.8em",
+                background: "#fafafb",
+              }}
+            >
+              {recommendedToolText}
+            </Box>
+          </Box>
+        )}
+        {/* =============== END NEW: Recommended Tool banner =============== */}
+
+        {/* Your existing Follow-up Suggestions strip */}
+        <PromptSuggestions
+          suggestionList={suggestionList}
+          setUserInput={setUserInput}
+          sessionId={ChatGPT?.selectedSession?.session_id}
+          // You no longer need to pass recommendedToolText into this component
+          // since we render the banner here in index.tsx
+        />
+      </Box>
+
+      {/* ... everything else below remains unchanged ... */}
+    </>
+  );
+}
