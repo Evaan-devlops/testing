@@ -1,123 +1,112 @@
-// src/pages/chatGPT/index.tsx
-import * as React from "react";
-import { Box, Typography } from "@mui/material";
-import PromptSuggestions from "./PromptSuggestions";
-import { analyzePrompt } from "@/helpers/analyzePrompt";
-import { useVoxAppContext } from "@/context/VoxAppContext";
+import React from "react";
+import { IconButton, Tooltip } from "@mui/material";
+import DownloadIcon from "@mui/icons-material/Download";
 
-export default function Chat() {
-  const { saveData, fetchData } = useVoxAppContext();
+/**
+ * ExportToWord
+ * ------------
+ * Renders a small Download button. On click, it grabs the innerHTML of the DOM
+ * node referenced by `exportRef` (your message content), wraps it in a minimal
+ * Word-friendly HTML document, and downloads a `.doc` file.
+ *
+ * Notes:
+ * - We purposely **don't** touch the avatar/bot icon because your ref should
+ *   point only to the response box. If an avatar somehow leaks inside the ref,
+ *   mark it with `data-export="exclude"` and we'll strip it.
+ */
+interface Props {
+  /** Ref to the element that contains ONLY the assistant response content */
+  exportRef: React.RefObject<HTMLElement>;
+  /** Optional custom filename without extension (defaults to "chat-response") */
+  filename?: string;
+}
 
-  // ... your existing state ...
+const ExportToWord: React.FC<Props> = ({ exportRef, filename }) => {
+  const handleDownload = React.useCallback(() => {
+    const el = exportRef.current;
+    if (!el) return;
 
-  // [L1512] ↓↓↓ Add analyzer state/effect RIGHT BEFORE `return (`
-  const [recommendedText, setRecommendedText] = React.useState<string>("");
-  const [lastSessionId, setLastSessionId] = React.useState<number | string>();
-  const [runKey, setRunKey] = React.useState(0); // bump on each submit
+    // Clone and sanitize (remove anything marked as "do not export")
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('[data-export="exclude"]').forEach((n) => n.remove());
+    // (extra safety) remove common avatar roles if they ever slip inside the ref
+    clone
+      .querySelectorAll('img[alt="AI"], img.avatar, img[data-role="avatar"]')
+      .forEach((n) => n.remove());
 
-  // Derive the single line to show (extract after "Recommended Tool:" if present)
-  const recommendedLine = React.useMemo(() => {
-    if (!recommendedText) return "";
-    const m = recommendedText.match(/Recommended Tool:\s*(.+)/i);
-    return (m ? m[1] : recommendedText).trim();
-  }, [recommendedText]);
+    // Build a Word-friendly HTML document. Word opens HTML perfectly fine
+    // when served with "application/msword" and a .doc filename.
+    const html =
+      `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Chat Export</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #111; }
+  h1,h2,h3 { font-weight: 600; }
+  ul,ol { padding-left: 24px; }
+  code, pre { font-family: Consolas, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+  table { border-collapse: collapse; }
+  table, th, td { border: 1px solid #ddd; padding: 6px; }
+</style>
+</head>
+<body>
+${clone.innerHTML}
+</body>
+</html>`;
 
-  // Call analyzer whenever we have a (new) session_id — BEFORE PromptSuggestions renders
-  React.useEffect(() => {
-    let cancelled = false;
+    const blob = new Blob([html], { type: "application/msword" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filename || "chat-response"}.doc`; // .doc opens in Word
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [exportRef, filename]);
 
-    (async () => {
-      if (!lastSessionId) {
-        setRecommendedText("");
-        return;
-      }
-
-      const text =
-        (await analyzePrompt(lastSessionId, { saveData, fetchData })) || "";
-
-      // Hide section if analyzer says "CONTINUE WITH CHAT"
-      const next = /CONTINUE WITH CHAT/i.test(text) ? "" : text;
-
-      if (!cancelled) setRecommendedText(next);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [lastSessionId, runKey, saveData, fetchData]);
-
-  // ===== handleSubmit (only the lines relevant to analyzer are shown) =====
-  async function handleSubmit(/* your args */) {
-    // ... your existing code that builds params ...
-    const params: any = await (window as any).generateChatParams?.(/* ... */);
-    const session_id = params?.session_id;
-    const max_tokens = params?.max_tokens ?? 0;
-
-    // IMPORTANT: trigger analyzer BEFORE the max_tokens guard
-    setRecommendedText("");        // clear old
-    setLastSessionId(session_id);  // provide fresh session
-    setRunKey((k) => k + 1);       // force rerun even if session id repeats
-
-    if (max_tokens === 0) {
-      // ... your alert and return ...
-      return;
-    }
-
-    // ... your normal chat flow ...
-  }
-
-  // [L1513] return begins here in your file
   return (
-    <Box sx={{ p: 2 }}>
-      {/* ... whatever is above in your layout ... */}
+    <Tooltip title="Download (.doc)">
+      <IconButton onClick={handleDownload} color="primary" size="small" sx={{ ml: 1 }}>
+        <DownloadIcon fontSize="inherit" />
+      </IconButton>
+    </Tooltip>
+  );
+};
 
-      {/* [L1916] ===== Recommended Tool SECTION (placed BEFORE PromptSuggestions) ===== */}
-      {!!recommendedLine && (
-        <Box
-          sx={{
-            maxWidth: "calc(60vw + 139px)",
-            margin: "0 auto",
-            mb: "8px",
-            "@media (max-width: 900px)": { maxWidth: "100%" },
-          }}
-        >
-          <Typography
-            sx={{
-              fontSize: "12px",
-              fontWeight: 700,
-              lineHeight: "16.34px",
-              textAlign: "left",
-              color: "#3578FF",
-              mb: "4px",
-            }}
-          >
-            Recommended Tool
-          </Typography>
+export default ExportToWord;
+#############################################################################3
 
-          <Box
-            sx={{
-              border: "1px solid rgba(0,0,0,0.08)",
-              borderRadius: "10px",
-              padding: "8px 10px",
-              background: "rgba(53,120,255,0.04)",
-              fontSize: "12.5px",
-            }}
-          >
-            {recommendedLine}
-          </Box>
-        </Box>
-      )}
+import ExportToWord from "../../components/ExportToWord";
 
-      {/* [L1924–L1933] Your existing PromptSuggestions call — now appears AFTER the section */}
-      <PromptSuggestions
-        suggestionList={suggestionList}
-        setUserInput={setUserInput}
-        sessionId={chatGPT?.selectedSession?.session_id}
-        // You can stop passing recommendedText if your component doesn’t use it anymore
-        // recommendedText={recommendedText}
-      />
 
-      {/* ... your input + submit, etc. ... */}
-    </Box>
+// Keep avatar OUTSIDE this div so it is neither copied nor exported
+// <img src="/assets/chatIcon.svg" alt="AI" />  ← leave this outside
+
+<div ref={contentRef} style={{ width: "100%", display: "flex" }}>
+  {/* assistant response markup lives here */}
+</div>
+
+
+<MessageTools
+  message={message}
+  contentRef={contentRef}
+  updateMessages={updateMessages}
+  setMessages={setMessages}
+/>
+
+function MessageTools(props: MessageToolsInterface) {
+  const { contentRef, /* ...rest */ } = props;
+
+  return (
+    <>
+      {/* NEW: Download button (before copy) */}
+      <ExportToWord exportRef={contentRef} filename="Mudram_Chat" />
+
+      {/* Existing: Copy button */}
+      <CopyRichContent copyRef={contentRef} />
+    </>
   );
 }
