@@ -1,112 +1,67 @@
-import React from "react";
-import { IconButton, Tooltip } from "@mui/material";
-import DownloadIcon from "@mui/icons-material/Download";
+@@
++  // NEW: local flag so the user can manually close the outage banner
++  const [isOutageOpen, setIsOutageOpen] = React.useState(true); // NEW
 
-/**
- * ExportToWord
- * ------------
- * Renders a small Download button. On click, it grabs the innerHTML of the DOM
- * node referenced by `exportRef` (your message content), wraps it in a minimal
- * Word-friendly HTML document, and downloads a `.doc` file.
- *
- * Notes:
- * - We purposely **don't** touch the avatar/bot icon because your ref should
- *   point only to the response box. If an avatar somehow leaks inside the ref,
- *   mark it with `data-export="exclude"` and we'll strip it.
- */
-interface Props {
-  /** Ref to the element that contains ONLY the assistant response content */
-  exportRef: React.RefObject<HTMLElement>;
-  /** Optional custom filename without extension (defaults to "chat-response") */
-  filename?: string;
-}
-
-const ExportToWord: React.FC<Props> = ({ exportRef, filename }) => {
-  const handleDownload = React.useCallback(() => {
-    const el = exportRef.current;
-    if (!el) return;
-
-    // Clone and sanitize (remove anything marked as "do not export")
-    const clone = el.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll('[data-export="exclude"]').forEach((n) => n.remove());
-    // (extra safety) remove common avatar roles if they ever slip inside the ref
-    clone
-      .querySelectorAll('img[alt="AI"], img.avatar, img[data-role="avatar"]')
-      .forEach((n) => n.remove());
-
-    // Build a Word-friendly HTML document. Word opens HTML perfectly fine
-    // when served with "application/msword" and a .doc filename.
-    const html =
-      `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Chat Export</title>
-<style>
-  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #111; }
-  h1,h2,h3 { font-weight: 600; }
-  ul,ol { padding-left: 24px; }
-  code, pre { font-family: Consolas, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
-  table { border-collapse: collapse; }
-  table, th, td { border: 1px solid #ddd; padding: 6px; }
-</style>
-</head>
-<body>
-${clone.innerHTML}
-</body>
-</html>`;
-
-    const blob = new Blob([html], { type: "application/msword" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${filename || "chat-response"}.doc`; // .doc opens in Word
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }, [exportRef, filename]);
-
-  return (
-    <Tooltip title="Download (.doc)">
-      <IconButton onClick={handleDownload} color="primary" size="small" sx={{ ml: 1 }}>
-        <DownloadIcon fontSize="inherit" />
-      </IconButton>
-    </Tooltip>
-  );
-};
-
-export default ExportToWord;
-#############################################################################3
-
-import ExportToWord from "../../components/ExportToWord";
+   return (
+     <OutageBannar
+-      open={outageNotice?.msg?.length > 0}
++      open={isOutageOpen && (outageNotice?.msg?.length > 0)} // NEW: gate with local flag
+       isAdmin={
+         userMeta?.role === 'super_admin' ||
+         userMeta?.license_information?.applications
+           ?.map((ele: { entry_point: any }) => ele.entry_point)
+           ?.includes('/notifications')
+       }
+       content={outageNotice?.msg}
+       id={outageNotice?.note_id}
++      onClose={() => {                     // NEW: handler for the "X" button
++        if (outageNotice?.note_id) {
++          hideNotice(outageNotice.note_id); // NEW: call your existing hide API (safe even if it’s a no-op)
++        }
++        setIsOutageOpen(false);             // NEW: immediately hide in UI
++      }}
+     />
 
 
-// Keep avatar OUTSIDE this div so it is neither copied nor exported
-// <img src="/assets/chatIcon.svg" alt="AI" />  ← leave this outside
+  @@
+- import { Alert } from '@mui/material';
++ import { Alert, IconButton } from '@mui/material';       // NEW
++ import CloseIcon from '@mui/icons-material/Close';        // NEW
 
-<div ref={contentRef} style={{ width: "100%", display: "flex" }}>
-  {/* assistant response markup lives here */}
-</div>
+- type Props = {
++ type Props = {
+     open: boolean;
+     isAdmin: boolean;
+     content: string;
+     id?: string | number;
++    onClose?: () => void; // NEW: optional close callback
+   }
+@@
+- if (!open) return null;
++ if (!open) return null;
 
-
-<MessageTools
-  message={message}
-  contentRef={contentRef}
-  updateMessages={updateMessages}
-  setMessages={setMessages}
-/>
-
-function MessageTools(props: MessageToolsInterface) {
-  const { contentRef, /* ...rest */ } = props;
-
-  return (
-    <>
-      {/* NEW: Download button (before copy) */}
-      <ExportToWord exportRef={contentRef} filename="Mudram_Chat" />
-
-      {/* Existing: Copy button */}
-      <CopyRichContent copyRef={contentRef} />
-    </>
-  );
-}
+- return (
+-   <Alert severity="info" sx={{ /* your styles */ }}>
+-     {content}
+-   </Alert>
+- );
++ return (
++   <Alert
++     severity="info"
++     sx={{ position: 'relative' /* NEW: so we can place the X button */ }}
++   >
++     {/* NEW: small "X" button to close the banner */}
++     {!!onClose && (
++       <IconButton
++         aria-label="close outage banner"
++         size="small"
++         onClick={onClose}                    // NEW: triggers the close logic above
++         sx={{ position: 'absolute', top: 8, right: 8 }}
++       >
++         <CloseIcon fontSize="small" />
++       </IconButton>
++     )}
++
++     {content}
++   </Alert>
++ );
