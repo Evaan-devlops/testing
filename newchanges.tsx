@@ -1,57 +1,15 @@
-Sweet—let’s drop a draggable, round GIF right on the header’s bottom border, and pop a tiny 6-line chat from it.
-
-Below are **two small edits** to your header + **one new component**. Copy–paste as is.
-
----
-
-# 1) Header changes (where your `<AppBar …>` is)
-
-```tsx
-// at top of the file
 import React from "react";
-import FloatingAssistant from "./FloatingAssistant"; // ⬅️ new file added below
-import tourAi from "@/assets/icons/tourAi.gif";       // ⬅️ your gif path
-
-// inside your component:
-const appBarRef = React.useRef<HTMLDivElement>(null);
-
-// ...later, replace your AppBar opening tag with this one so we can anchor:
-<AppBar
-  ref={appBarRef}                                     // ⬅️ add ref so we know where the border is
-  sx={{
-    backgroundColor: "#FFF",
-    borderBottom: "1px solid #E0E0E0",
-    position: isVoxAuthor ? "sticky" : "static",
-    top: isVoxAuthor && 0,
-    boxShadow: "none",
-  }}
->
-  {/* …your header content… */}
-</AppBar>
-
-{/* Put the assistant AFTER the AppBar so it can sit on the border and later float */}
-<FloatingAssistant gifSrc={tourAi} anchorRef={appBarRef} />
-```
-
-> 💡 The assistant starts **centered on the AppBar’s bottom border**, then becomes **freely draggable** and stays where you drop it.
-
----
-
-# 2) New file: `src/components/FloatingAssistant.tsx`
-
-```tsx
-import React from "react";
-import { Box, Paper, Typography, IconButton, TextField, InputAdornment } from "@mui/material";
+import {
+  Box,
+  Paper,
+  Typography,
+  IconButton,
+  TextField,
+  InputAdornment,
+  Tooltip,
+} from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
 
-/**
- * FloatingAssistant
- * - Starts anchored: centered on the AppBar bottom border (via anchorRef).
- * - Draggable: click+drag to move anywhere; it stays where you release it.
- * - On click: opens a smooth, 6-line mini chat window "attached" to the GIF.
- * - Textbox with rounded blue border, send inside input, enabled only with text.
- * - Shows user message (right), bot (left). While "waiting", shows animated dots.
- */
 type Props = {
   gifSrc: string;
   anchorRef: React.RefObject<HTMLElement>;
@@ -65,50 +23,87 @@ const CHAT_WIDTH = 320; // px
 const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef }) => {
   const [anchored, setAnchored] = React.useState(true);
   const [open, setOpen] = React.useState(false);
+
+  // Rendered position (smoothed); target position (immediate)
   const [pos, setPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const targetPos = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
   const [dragging, setDragging] = React.useState(false);
+  const [hovering, setHovering] = React.useState(false);
   const dragOffset = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const rafId = React.useRef<number | null>(null);
 
   const [input, setInput] = React.useState("");
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [typing, setTyping] = React.useState(false);
 
-  // Compute initial anchored position: center at AppBar’s bottom border.
+  // Initial anchor: center on AppBar bottom border
   React.useLayoutEffect(() => {
     if (!anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2 - AVATAR_SIZE / 2;
-    const onBorderY = rect.bottom - AVATAR_SIZE / 2; // straddle the 1px border
-    setPos({ x: centerX, y: onBorderY });
+    const onBorderY = rect.bottom - AVATAR_SIZE / 2;
+    const start = { x: centerX, y: onBorderY };
+    targetPos.current = start;
+    setPos(start);
   }, [anchorRef]);
 
-  // Drag handlers (pointer-based for mouse/touch).
+  // Smooth position animator (rAF + lerp)
+  React.useEffect(() => {
+    const animate = () => {
+      // simple critically-damped-ish lerp
+      const k = 0.25; // smoothing factor: larger = snappier
+      const nx = pos.x + (targetPos.current.x - pos.x) * k;
+      const ny = pos.y + (targetPos.current.y - pos.y) * k;
+
+      // If close enough, snap; else keep animating
+      if (Math.abs(nx - pos.x) < 0.1 && Math.abs(ny - pos.y) < 0.1) {
+        setPos(targetPos.current);
+        rafId.current = requestAnimationFrame(animate);
+        return;
+      }
+      setPos({ x: nx, y: ny });
+      rafId.current = requestAnimationFrame(animate);
+    };
+    rafId.current = requestAnimationFrame(animate);
+    return () => {
+      if (rafId.current) cancelAnimationFrame(rafId.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [/* run once */]);
+
+  // Dragging (pointer-based)
   const onPointerDown = (e: React.PointerEvent) => {
     (e.target as Element).setPointerCapture(e.pointerId);
     setDragging(true);
-    setAnchored(false); // once you drag, it floats (fixed positioning)
-    dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+    setAnchored(false);
+    dragOffset.current = { x: e.clientX - targetPos.current.x, y: e.clientY - targetPos.current.y };
   };
   const onPointerMove = (e: React.PointerEvent) => {
     if (!dragging) return;
-    setPos({ x: e.clientX - dragOffset.current.x, y: e.clientY - dragOffset.current.y });
+    targetPos.current = {
+      x: e.clientX - dragOffset.current.x,
+      y: e.clientY - dragOffset.current.y,
+    };
   };
   const onPointerUp = (e: React.PointerEvent) => {
     setDragging(false);
     (e.target as Element).releasePointerCapture(e.pointerId);
   };
 
-  // Toggle open on avatar click (no drag)
+  // Hover state (for tooltip + “ready to drag” scale)
+  const onMouseEnter = () => setHovering(true);
+  const onMouseLeave = () => setHovering(false);
+
   const onAvatarClick = () => setOpen((v) => !v);
 
-  // Submit message (Enter or send icon)
+  // Messaging
   const submit = () => {
     const text = input.trim();
     if (!text) return;
     const userMsg: Message = { id: crypto.randomUUID(), from: "user", text };
     setMessages((m) => [...m, userMsg]);
     setInput("");
-    // fake API: show typing dots, then a reply
     setTyping(true);
     setTimeout(() => {
       setTyping(false);
@@ -120,7 +115,6 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef }) => {
       setMessages((m) => [...m, botMsg]);
     }, 1100);
   };
-
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -148,7 +142,6 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef }) => {
     </Box>
   );
 
-  // Bubbles
   const Bubble: React.FC<{ from: "user" | "bot"; children: React.ReactNode }> = ({ from, children }) => (
     <Box
       sx={{
@@ -168,61 +161,68 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef }) => {
     </Box>
   );
 
-  // Positioning style: anchored = absolute to the app bar’s flow; floating = fixed
-  const avatarStyle = anchored
-    ? {
-        position: "absolute" as const,
-        left: pos.x,
-        top: pos.y,
-      }
-    : {
-        position: "fixed" as const,
-        left: pos.x,
-        top: pos.y,
-      };
+  // Fixed positioning + GPU-accelerated translate for smoothness
+  const positioning = {
+    position: anchored ? ("absolute" as const) : ("fixed" as const),
+    left: 0,
+    top: 0,
+    transform: `translate3d(${pos.x}px, ${pos.y}px, 0)`,
+  };
+
+  // Scale rules:
+  // - hover (ready to drag): 1.08
+  // - dragging: 1.14
+  const scale = dragging ? 1.14 : hovering ? 1.08 : 1;
 
   return (
     <>
       {/* Avatar (round GIF) */}
-      <Box
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onClick={onAvatarClick}
-        sx={{
-          ...avatarStyle,
-          zIndex: 1300,
-          width: AVATAR_SIZE,
-          height: AVATAR_SIZE,
-          borderRadius: "50%",
-          overflow: "hidden",
-          cursor: dragging ? "grabbing" : "grab",
-          outline: "2px solid #E0E0E0",  // subtle ring to sit on the border
-          bgcolor: "#fff",
-          display: "grid",
-          placeItems: "center",
-          transition: "transform 180ms ease",
-          "&:active": { transform: "scale(0.98)" },
-        }}
-      >
+      <Tooltip title="VOX Assistant" arrow placement="top">
         <Box
-          component="img"
-          src={gifSrc}
-          alt="assistant"
-          sx={{ width: "100%", height: "100%", objectFit: "cover" }} // makes it perfectly round
-        />
-      </Box>
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onClick={onAvatarClick}
+          onMouseEnter={onMouseEnter}
+          onMouseLeave={onMouseLeave}
+          sx={{
+            ...positioning,
+            zIndex: 1300,
+            width: AVATAR_SIZE,
+            height: AVATAR_SIZE,
+            borderRadius: "50%",
+            overflow: "hidden",
+            cursor: dragging ? "grabbing" : "grab",
+            outline: "2px solid #E0E0E0",
+            bgcolor: "#fff",
+            display: "grid",
+            placeItems: "center",
+            // Smooth scale + subtle shadow while interacting
+            transformOrigin: "center",
+            transition: "transform 120ms ease, box-shadow 120ms ease",
+            transform: `${positioning.transform} scale(${scale})`,
+            boxShadow: dragging || hovering ? 4 : 0,
+            willChange: "transform",
+          }}
+        >
+          <Box
+            component="img"
+            src={gifSrc}
+            alt="assistant"
+            sx={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        </Box>
+      </Tooltip>
 
       {/* Chat window (slides open from avatar) */}
       <Paper
         elevation={6}
         sx={{
           position: anchored ? "absolute" : "fixed",
-          left: pos.x + AVATAR_SIZE + 12, // extend from avatar’s right
-          top: pos.y,
-          width: CHAT_WIDTH,
+          left: 0,
+          top: 0,
+          transform: `translate3d(${pos.x + AVATAR_SIZE + 12}px, ${pos.y}px, 0) ${open ? "scale(1)" : "scale(0.9)"}`,
           transformOrigin: "left top",
-          transform: open ? "scale(1)" : "scale(0.9)",
           opacity: open ? 1 : 0,
           pointerEvents: open ? "auto" : "none",
           transition: "opacity 180ms ease, transform 180ms ease",
@@ -230,16 +230,17 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef }) => {
           borderRadius: 2,
           bgcolor: "#fff",
           zIndex: 1300,
+          width: CHAT_WIDTH,
+          willChange: "transform, opacity",
         }}
       >
-        {/* Messages area: exactly ~6 lines tall (uses lh unit where supported) */}
         <Box
           sx={{
             display: "flex",
             flexDirection: "column",
             gap: 1,
-            height: "6lh",           // modern; falls back below
-            minHeight: 108,          // fallback ~6 * 18px
+            height: "6lh",
+            minHeight: 108,
             maxHeight: 132,
             overflowY: "auto",
             pr: 0.5,
@@ -258,7 +259,6 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef }) => {
           )}
         </Box>
 
-        {/* Input with rounded blue outline and send button inside */}
         <TextField
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -298,16 +298,3 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef }) => {
 };
 
 export default FloatingAssistant;
-```
-
----
-
-## Notes & why this fits each requirement
-
-* **(a) Round GIF on the border center**: initially positioned with the AppBar’s DOM rect; we offset by half the avatar height to straddle the bottom border.
-* **(b) Draggable & persists**: pointer events update a fixed `pos`, so it stays where you leave it.
-* **(c) Smoothly opens a 6-line chat**: tiny Paper scales/opacity-fades from the GIF; message pane height \~6 lines.
-* **(d) Textbox with curved blue edges + send inside**: rounded 9999 radius, blue outline, end-adornment send icon enabled only when there’s text; Enter submits.
-* **(e) User right, bot left, 3 flashing dots**: bubbles aligned, and a lightweight `blink` animation simulates typing until the dummy reply arrives.
-
-If your project uses a different asset path, just update the `import tourAi` line.
