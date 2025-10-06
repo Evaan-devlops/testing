@@ -475,3 +475,46 @@ if (!botText) {
 setTyping(false);
 const botMsg: Message = { id: crypto.randomUUID(), from: "bot", text: botText };
 setMessages((m) => [...m, botMsg]);
+************************************************************************************
+
+  // 1) Types for clarity
+type VoxMessage = {
+  msg_id?: number;
+  usr_session_id?: number;
+  msg_type_id?: number;
+  msg_text?: string;
+  msg?: string;
+  // ...other fields optional
+};
+
+type VoxChatResponse = {
+  status_code?: number;
+  status?: string;
+  result?: string;     // JSON string like {"role":"assistant","content":"..."}
+  message?: VoxMessage[];
+};
+
+// 2) Call WITHOUT a generic, and coerce the result to any/typed object
+const url =
+  "/vox/auth/service/chats?is_gen_ai_studio_client=false&regenerate_response=false&response_stream=false&route_to_genai=false&assistant=true";
+
+const res: any = await saveData(url, payload);
+const json: VoxChatResponse = (res?.data ?? res) as VoxChatResponse;
+
+// 3) Extract msg_text/msg
+let botText = "";
+const first = json.message?.find(m => (m.msg_text ?? m.msg)?.trim()) ?? json.message?.[0];
+if (first) botText = (first.msg_text ?? first.msg ?? "").toString().trim();
+
+// 4) Fallback to parse `result`
+if (!botText && typeof json.result === "string") {
+  try {
+    const r = JSON.parse(json.result);
+    if (r && typeof r.content === "string") botText = r.content.trim();
+  } catch { /* ignore */ }
+}
+
+if (!botText) botText = "No response text returned by the service.";
+
+setTyping(false);
+setMessages(m => [...m, { id: crypto.randomUUID(), from: "bot", text: botText }]);
