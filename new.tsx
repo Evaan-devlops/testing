@@ -76,3 +76,18 @@ const ensureSession = async (): Promise<number> => {
   sessionId={sessionId ?? undefined}
   ensureSession={ensureSession}
 />
+const res: any = await saveData("/auth/service/session/create", payload);
+
+// prefer the axios-style .data if present
+const json = res?.data ?? res;
+
+const tryDirect = json?.session_id;
+let sid: number | null = typeof tryDirect === "number" ? tryDirect : null;
+
+if (!sid) {
+  const str = JSON.stringify(json);
+  const m = str.match(/"session_id"\s*:\s*(\d+)/);
+  sid = m ? Number(m[1]) : null;
+}
+if (!sid) throw new Error("session_id not found in create-session response");
+setSessionId(sid);
