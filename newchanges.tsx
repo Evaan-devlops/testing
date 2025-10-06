@@ -10,9 +10,7 @@ import {
   Tooltip,
 } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
-// Adjust this import path if your folder layout differs.
-// For typical layout: src/components/* -> src/services/apiService
-import { saveData } from "../services/apiService";
+import { saveData } from "../services/apiService"; // adjust path if needed
 
 type Props = {
   /** Round GIF source */
@@ -30,12 +28,33 @@ type Props = {
 
 type Message = { id: string; from: "user" | "bot"; text: string };
 
+type VoxMessage = {
+  msg_id?: number;
+  usr_session_id?: number;
+  msg_type_id?: number;
+  msg_text?: string;
+  msg?: string;
+  // other fields ignored
+};
+
+type VoxChatResponse = {
+  status_code?: number;
+  status?: string;
+  result?: string; // sometimes holds a JSON string: {"role":"assistant","content":"..."}
+  message?: VoxMessage[];
+};
+
 const AVATAR_SIZE = 56; // px
 const CHAT_WIDTH = 320; // px
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
-const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef, sessionId: sessionIdProp, ensureSession }) => {
+const FloatingAssistant: React.FC<Props> = ({
+  gifSrc,
+  anchorRef,
+  sessionId: sessionIdProp,
+  ensureSession,
+}) => {
   // --- layout & animation state ---
   const [anchored, setAnchored] = React.useState(true); // absolute vs fixed
   const [open, setOpen] = React.useState(false);
@@ -61,7 +80,8 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef, sessionId: sess
     if (typeof sessionIdProp === "number" && sessionIdProp !== sessionId) {
       setSessionId(sessionIdProp);
     }
-  }, [sessionIdProp, sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionIdProp]);
 
   // ----- Initial anchor: center on AppBar bottom border -----
   React.useLayoutEffect(() => {
@@ -189,7 +209,10 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef, sessionId: sess
   );
 
   // ----- Chat bubble -----
-  const Bubble: React.FC<{ from: "user" | "bot"; children: React.ReactNode }> = ({ from, children }) => (
+  const Bubble: React.FC<{ from: "user" | "bot"; children: React.ReactNode }> = ({
+    from,
+    children,
+  }) => (
     <Box
       sx={{
         alignSelf: from === "user" ? "flex-end" : "flex-start",
@@ -228,7 +251,7 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef, sessionId: sess
       }
       if (!sid) throw new Error("Missing session_id");
 
-      // Payload shape matches your screenshot (#6), replacing "user_input" with `text`
+      // Payload shape from your spec, replacing the placeholder with user input
       const payload = {
         chat_completion_message: {
           session_id: sid, // <-- from header
@@ -252,20 +275,34 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef, sessionId: sess
         },
       };
 
-      // Keep the query string flags as shown in your screenshot
-      const res = await saveData(
-        "/vox/auth/service/chats?is_gen_ai_studio_client=false&regenerate_response=false&response_stream=false&route_to_genai=false&assistant=true",
-        payload
-      );
+      // Endpoint with the flags you showed
+      const url =
+        "/vox/auth/service/chats?is_gen_ai_studio_client=false&regenerate_response=false&response_stream=false&route_to_genai=false&assistant=true";
 
-      // Defensive extraction until exact shape is confirmed
-      const data = (res as any)?.data ?? res;
-      const botText =
-        data?.answer ??
-        data?.message ??
-        data?.content ??
-        data?.response_text ??
-        String(typeof data === "string" ? data : JSON.stringify(data)).slice(0, 500);
+      // NOTE: saveData is not generic; coerce result to any and normalize
+      const res: any = await saveData(url, payload);
+      const json: VoxChatResponse = (res?.data ?? res) as VoxChatResponse;
+
+      // 1) Primary: take first message[].msg_text (or .msg)
+      let botText = "";
+      const first =
+        json.message?.find((m) => (m.msg_text ?? m.msg)?.toString().trim()) ??
+        json.message?.[0];
+
+      if (first) botText = (first.msg_text ?? first.msg ?? "").toString().trim();
+
+      // 2) Fallback: parse top-level `result` JSON string -> { role, content }
+      if (!botText && typeof json.result === "string") {
+        try {
+          const r = JSON.parse(json.result);
+          if (r && typeof r.content === "string") botText = r.content.trim();
+        } catch {
+          /* ignore parse error */
+        }
+      }
+
+      // 3) Last fallback
+      if (!botText) botText = "No response text returned by the service.";
 
       setTyping(false);
       const botMsg: Message = { id: crypto.randomUUID(), from: "bot", text: botText };
@@ -425,96 +462,3 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef, sessionId: sess
 };
 
 export default FloatingAssistant;
-**********************************************************
-
-  // Keep the query string flags as shown in your screenshot
-type VoxChatResponse = {
-  status_code?: number;
-  status?: string;
-  result?: string; // e.g. "{\"role\":\"assistant\",\"content\":\"...\"}"
-  message?: Array<{
-    msg?: string;       // sometimes API uses "msg"
-    msg_text?: string;  // in your screenshot it is "msg_text"
-    // other fields ignored
-  }>;
-};
-
-const res = await saveData<VoxChatResponse>(
-  "/vox/auth/service/chats?is_gen_ai_studio_client=false&regenerate_response=false&response_stream=false&route_to_genai=false&assistant=true",
-  payload
-);
-
-// prefer axios-like .data but also handle raw object just in case
-const json: VoxChatResponse = (res as any)?.data ?? (res as any) ?? {};
-
-// 1) Primary: first message[].msg_text (or .msg)
-let botText = "";
-if (Array.isArray(json.message) && json.message.length) {
-  const first = json.message.find(
-    (m: any) => typeof m?.msg_text === "string" || typeof m?.msg === "string"
-  ) ?? json.message[0];
-
-  botText = (first.msg_text ?? first.msg ?? "").toString().trim();
-}
-
-// 2) Fallback: parse the top-level `result` JSON string -> { role, content }
-if (!botText && typeof json.result === "string") {
-  try {
-    const r = JSON.parse(json.result);
-    if (r && typeof r.content === "string") botText = r.content.trim();
-  } catch {
-    // ignore parse error
-  }
-}
-
-// 3) Last fallback: stringify something so user sees *why* it's empty
-if (!botText) {
-  botText = "No response text returned by the service.";
-}
-
-setTyping(false);
-const botMsg: Message = { id: crypto.randomUUID(), from: "bot", text: botText };
-setMessages((m) => [...m, botMsg]);
-************************************************************************************
-
-  // 1) Types for clarity
-type VoxMessage = {
-  msg_id?: number;
-  usr_session_id?: number;
-  msg_type_id?: number;
-  msg_text?: string;
-  msg?: string;
-  // ...other fields optional
-};
-
-type VoxChatResponse = {
-  status_code?: number;
-  status?: string;
-  result?: string;     // JSON string like {"role":"assistant","content":"..."}
-  message?: VoxMessage[];
-};
-
-// 2) Call WITHOUT a generic, and coerce the result to any/typed object
-const url =
-  "/vox/auth/service/chats?is_gen_ai_studio_client=false&regenerate_response=false&response_stream=false&route_to_genai=false&assistant=true";
-
-const res: any = await saveData(url, payload);
-const json: VoxChatResponse = (res?.data ?? res) as VoxChatResponse;
-
-// 3) Extract msg_text/msg
-let botText = "";
-const first = json.message?.find(m => (m.msg_text ?? m.msg)?.trim()) ?? json.message?.[0];
-if (first) botText = (first.msg_text ?? first.msg ?? "").toString().trim();
-
-// 4) Fallback to parse `result`
-if (!botText && typeof json.result === "string") {
-  try {
-    const r = JSON.parse(json.result);
-    if (r && typeof r.content === "string") botText = r.content.trim();
-  } catch { /* ignore */ }
-}
-
-if (!botText) botText = "No response text returned by the service.";
-
-setTyping(false);
-setMessages(m => [...m, { id: crypto.randomUUID(), from: "bot", text: botText }]);
