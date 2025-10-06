@@ -425,3 +425,53 @@ const FloatingAssistant: React.FC<Props> = ({ gifSrc, anchorRef, sessionId: sess
 };
 
 export default FloatingAssistant;
+**********************************************************
+
+  // Keep the query string flags as shown in your screenshot
+type VoxChatResponse = {
+  status_code?: number;
+  status?: string;
+  result?: string; // e.g. "{\"role\":\"assistant\",\"content\":\"...\"}"
+  message?: Array<{
+    msg?: string;       // sometimes API uses "msg"
+    msg_text?: string;  // in your screenshot it is "msg_text"
+    // other fields ignored
+  }>;
+};
+
+const res = await saveData<VoxChatResponse>(
+  "/vox/auth/service/chats?is_gen_ai_studio_client=false&regenerate_response=false&response_stream=false&route_to_genai=false&assistant=true",
+  payload
+);
+
+// prefer axios-like .data but also handle raw object just in case
+const json: VoxChatResponse = (res as any)?.data ?? (res as any) ?? {};
+
+// 1) Primary: first message[].msg_text (or .msg)
+let botText = "";
+if (Array.isArray(json.message) && json.message.length) {
+  const first = json.message.find(
+    (m: any) => typeof m?.msg_text === "string" || typeof m?.msg === "string"
+  ) ?? json.message[0];
+
+  botText = (first.msg_text ?? first.msg ?? "").toString().trim();
+}
+
+// 2) Fallback: parse the top-level `result` JSON string -> { role, content }
+if (!botText && typeof json.result === "string") {
+  try {
+    const r = JSON.parse(json.result);
+    if (r && typeof r.content === "string") botText = r.content.trim();
+  } catch {
+    // ignore parse error
+  }
+}
+
+// 3) Last fallback: stringify something so user sees *why* it's empty
+if (!botText) {
+  botText = "No response text returned by the service.";
+}
+
+setTyping(false);
+const botMsg: Message = { id: crypto.randomUUID(), from: "bot", text: botText };
+setMessages((m) => [...m, botMsg]);
