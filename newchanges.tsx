@@ -12,7 +12,7 @@ import {
 import SendIcon from "@mui/icons-material/Send";
 import MinimizeIcon from "@mui/icons-material/Minimize";
 import ChatBubbleIcon from "@mui/icons-material/ChatBubbleOutline";
-import { saveData } from "../services/apiService"; // adjust path if needed
+import { saveData } from "../services/apiService"; // adjust if needed
 
 type Props = {
   gifSrc: string;
@@ -38,6 +38,7 @@ const AVATAR_SIZE = 80;               // bigger round GIF
 const CHAT_WIDTH = 440;               // wider chat panel
 const MAX_MESSAGES_HEIGHT = "60vh";   // panel grows up to this, then scrolls
 const MIN_MESSAGES_HEIGHT = 120;      // minimum messages area height (px)
+const DOCK_SIZE = 56;                 // right-edge launcher size
 /** -------------------------------- */
 
 const clamp = (v: number, min: number, max: number) =>
@@ -157,6 +158,7 @@ const FloatingAssistant: React.FC<Props> = ({
   const onMouseEnter = () => setHovering(true);
   const onMouseLeave = () => setHovering(false);
 
+  // ensure a session if possible
   const ensureSessionNow = async () => {
     if (!sessionId && ensureSession) {
       const sid = await ensureSession();
@@ -170,7 +172,7 @@ const FloatingAssistant: React.FC<Props> = ({
     try {
       await ensureSessionNow();
     } catch {
-      /* ignore; submit() warns if missing */
+      /* submit() will show the error if needed */
     }
     setOpen((v) => !v);
     setMinimized(false);
@@ -325,46 +327,54 @@ const FloatingAssistant: React.FC<Props> = ({
     top: 0,
   };
 
-  // --- Dock launcher (right edge) ---
+  /** ---------------- Dock launcher (right edge) ---------------- */
+  const restoreFromDock = async () => {
+    // put avatar near right edge (visible) before opening
+    setAnchored(false);
+    const margin = 16;
+    const x = (window.innerWidth ?? 0) - AVATAR_SIZE - margin;
+    const y = Math.round((window.innerHeight ?? 0) * 0.6) - AVATAR_SIZE / 2;
+    const clamped = {
+      x: clamp(x, margin, (window.innerWidth ?? 0) - AVATAR_SIZE - margin),
+      y: clamp(y, margin, (window.innerHeight ?? 0) - AVATAR_SIZE - margin),
+    };
+    targetPos.current = clamped;
+    setPos(clamped);
+
+    await ensureSessionNow();
+    setMinimized(false);
+    setOpen(true);
+  };
+
   const DockLauncher = () =>
     minimized ? (
       <Tooltip title="Open VOX Assistant" placement="left">
         <Box
           role="button"
-          tabIndex={0}
           aria-label="Open VOX Assistant"
+          tabIndex={0}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              void (async () => {
-                await ensureSessionNow();
-                setMinimized(false);
-                setOpen(true);
-              })();
+              void restoreFromDock();
             }
           }}
-          onClick={() =>
-            void (async () => {
-              await ensureSessionNow();
-              setMinimized(false);
-              setOpen(true);
-            })()
-          }
+          onClick={() => void restoreFromDock()}
           sx={{
             position: "fixed",
             top: "60%",
             right: 12,
             transform: "translateY(-50%)",
-            width: 56,
-            height: 56,
-            borderRadius: "28px",
+            width: DOCK_SIZE,
+            height: DOCK_SIZE,
+            borderRadius: DOCK_SIZE / 2,
             background: "#ffffff",
             border: "1px solid rgba(0,0,0,0.12)",
             boxShadow: 4,
             display: "grid",
             placeItems: "center",
             cursor: "pointer",
-            zIndex: 2000,           // ensure it’s above everything
+            zIndex: 3000,          // on top of everything
             pointerEvents: "auto",
           }}
         >
@@ -417,7 +427,7 @@ const FloatingAssistant: React.FC<Props> = ({
               position: anchored ? "absolute" : "fixed",
             }}
           >
-            {/* Mini overlay minimize button on the avatar */}
+            {/* Mini overlay minimize button on the avatar (works even when chat closed) */}
             <IconButton
               size="small"
               onClick={(e) => {
@@ -434,6 +444,8 @@ const FloatingAssistant: React.FC<Props> = ({
                 bgcolor: "#fff",
                 border: "1px solid rgba(0,0,0,0.12)",
                 boxShadow: 2,
+                zIndex: 1400,
+                pointerEvents: "auto",
                 "&:hover": { bgcolor: "#fafafa" },
               }}
             >
