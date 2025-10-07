@@ -10,6 +10,8 @@ import {
   Tooltip,
 } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
+import MinimizeIcon from "@mui/icons-material/Minimize";
+import ChatBubbleIcon from "@mui/icons-material/ChatBubbleOutline";
 import { saveData } from "../services/apiService"; // adjust path if needed
 
 type Props = {
@@ -21,12 +23,7 @@ type Props = {
 
 type Message = { id: string; from: "user" | "bot"; text: string };
 
-type VoxMessage = {
-  msg_text?: string;
-  msg?: string;
-  // other fields ignored
-};
-
+type VoxMessage = { msg_text?: string; msg?: string };
 type VoxChatResponse =
   | {
       status_code?: number;
@@ -36,12 +33,15 @@ type VoxChatResponse =
     }
   | any;
 
-const AVATAR_SIZE = 56;
-const CHAT_WIDTH = 420;           // wider chat
-const MAX_MESSAGES_HEIGHT = "60vh"; // window grows until this, then scrolls
-const MIN_MESSAGES_HEIGHT = 120;    // minimum visible height in px
+/** ---------- tweakables ---------- */
+const AVATAR_SIZE = 80;               // bigger round GIF
+const CHAT_WIDTH = 440;               // wider chat panel
+const MAX_MESSAGES_HEIGHT = "60vh";   // panel grows up to this, then scrolls
+const MIN_MESSAGES_HEIGHT = 120;      // minimum messages area height (px)
+/** -------------------------------- */
 
-const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+const clamp = (v: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, v));
 
 const FloatingAssistant: React.FC<Props> = ({
   gifSrc,
@@ -52,6 +52,8 @@ const FloatingAssistant: React.FC<Props> = ({
   // layout / animation
   const [anchored, setAnchored] = React.useState(true);
   const [open, setOpen] = React.useState(false);
+  const [minimized, setMinimized] = React.useState(false); // NEW
+
   const [pos, setPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const targetPos = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const [dragging, setDragging] = React.useState(false);
@@ -63,8 +65,6 @@ const FloatingAssistant: React.FC<Props> = ({
   const [input, setInput] = React.useState("");
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [typing, setTyping] = React.useState(false);
-
-  // dynamic sizing: measure messages area
   const messagesBoxRef = React.useRef<HTMLDivElement | null>(null);
 
   // session
@@ -76,7 +76,7 @@ const FloatingAssistant: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionIdProp]);
 
-  // initial anchor to AppBar bottom border (or restore saved)
+  // initial anchor (or restore saved avatar position)
   React.useLayoutEffect(() => {
     if (!anchorRef.current) return;
     const saved = localStorage.getItem("vox-avatar-pos");
@@ -115,7 +115,7 @@ const FloatingAssistant: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // re-anchor on resize if still anchored
+  // re-anchor on resize when still anchored
   React.useEffect(() => {
     if (!anchored) return;
     const onResize = () => {
@@ -135,7 +135,10 @@ const FloatingAssistant: React.FC<Props> = ({
     (e.target as Element).setPointerCapture?.(e.pointerId);
     setDragging(true);
     setAnchored(false);
-    dragOffset.current = { x: e.clientX - targetPos.current.x, y: e.clientY - targetPos.current.y };
+    dragOffset.current = {
+      x: e.clientX - targetPos.current.x,
+      y: e.clientY - targetPos.current.y,
+    };
   };
   const onPointerMove = (e: React.PointerEvent) => {
     if (!dragging) return;
@@ -160,12 +163,14 @@ const FloatingAssistant: React.FC<Props> = ({
         const sid = await ensureSession();
         setSessionId(sid);
       } catch {
-        // ignore—submit() warns if missing
+        // ignore—submit() will error if missing
       }
     }
     setOpen((v) => !v);
+    setMinimized(false); // ensure visible if user clicks avatar
   };
 
+  // Enter to send
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -173,67 +178,24 @@ const FloatingAssistant: React.FC<Props> = ({
     }
   };
 
-  // auto-scroll to the most recent message
+  // auto-scroll newest
   React.useEffect(() => {
     const el = messagesBoxRef.current;
     if (!el) return;
-    // allow DOM to paint, then scroll
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
     });
   }, [messages, typing, open]);
 
-  // typing dots
-  const Dots = () => (
-    <Box sx={{ display: "inline-flex", gap: "4px", alignItems: "center" }}>
-      {[0, 1, 2].map((i) => (
-        <Box
-          key={i}
-          sx={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: "currentColor",
-            opacity: 0.5,
-            animation: `blink 1s ${i * 0.15}s infinite`,
-            "@keyframes blink": { "0%, 80%, 100%": { opacity: 0.2 }, "40%": { opacity: 1 } },
-          }}
-        />
-      ))}
-    </Box>
-  );
-
-  const Bubble: React.FC<{ from: "user" | "bot"; children: React.ReactNode }> = ({
-    from,
-    children,
-  }) => (
-    <Box
-      sx={{
-        alignSelf: from === "user" ? "flex-end" : "flex-start",
-        maxWidth: "85%",
-        px: 1.25,
-        py: 0.75,
-        borderRadius: 2,
-        bgcolor: from === "user" ? "primary.main" : "grey.100",
-        color: from === "user" ? "primary.contrastText" : "text.primary",
-        boxShadow: 1,
-      }}
-    >
-      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
-        {children}
-      </Typography>
-    </Box>
-  );
-
-  // helper to normalize API "message" into an array
-  const normalizeMessagesArray = (m: VoxChatResponse["message"]): VoxMessage[] => {
+  // normalize backend message field to array
+  const toArray = (m: VoxChatResponse["message"]): VoxMessage[] => {
     if (!m) return [];
     if (Array.isArray(m)) return m;
-    // if backend sometimes returns a single object instead of array
     if (typeof m === "object") return [m as VoxMessage];
     return [];
-    };
+  };
 
+  // send to API
   const submit = async () => {
     const text = input.trim();
     if (!text) return;
@@ -280,23 +242,16 @@ const FloatingAssistant: React.FC<Props> = ({
       const res: any = await saveData(url, payload);
       const json: VoxChatResponse = (res?.data ?? res) as VoxChatResponse;
 
-      // robust extraction:
-      // 1) first available msg_text/msg from message[]
-      const arr = normalizeMessagesArray(json?.message);
-      const first =
-        arr.find((m) => (m.msg_text ?? m.msg)?.toString().trim()) ?? arr[0];
+      const arr = toArray(json?.message);
+      const first = arr.find((m) => (m.msg_text ?? m.msg)?.toString().trim()) ?? arr[0];
       let botText = first ? (first.msg_text ?? first.msg ?? "").toString().trim() : "";
 
-      // 2) fallback: parse top-level "result" JSON string { content }
       if (!botText && typeof json?.result === "string") {
         try {
           const r = JSON.parse(json.result);
           if (r && typeof r.content === "string") botText = r.content.trim();
-        } catch {
-          /* ignore */
-        }
+        } catch {}
       }
-
       if (!botText) botText = "No response text returned by the service.";
 
       setTyping(false);
@@ -314,6 +269,51 @@ const FloatingAssistant: React.FC<Props> = ({
     }
   };
 
+  // UI bits
+  const Dots = () => (
+    <Box sx={{ display: "inline-flex", gap: "4px", alignItems: "center" }}>
+      {[0, 1, 2].map((i) => (
+        <Box
+          key={i}
+          sx={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: "currentColor",
+            opacity: 0.5,
+            animation: `blink 1s ${i * 0.15}s infinite`,
+            "@keyframes blink": {
+              "0%, 80%, 100%": { opacity: 0.2 },
+              "40%": { opacity: 1 },
+            },
+          }}
+        />
+      ))}
+    </Box>
+  );
+
+  const Bubble: React.FC<{ from: "user" | "bot"; children: React.ReactNode }> = ({
+    from,
+    children,
+  }) => (
+    <Box
+      sx={{
+        alignSelf: from === "user" ? "flex-end" : "flex-start",
+        maxWidth: "85%",
+        px: 1.25,
+        py: 0.75,
+        borderRadius: 2,
+        bgcolor: from === "user" ? "primary.main" : "grey.100",
+        color: from === "user" ? "primary.contrastText" : "text.primary",
+        boxShadow: 1,
+      }}
+    >
+      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+        {children}
+      </Typography>
+    </Box>
+  );
+
   // positioning + scale
   const baseTransform = `translate3d(${pos.x}px, ${pos.y}px, 0)`;
   const scale = dragging ? 1.14 : hovering ? 1.08 : 1;
@@ -323,136 +323,191 @@ const FloatingAssistant: React.FC<Props> = ({
     top: 0,
   };
 
-  return (
-    <>
-      {/* Avatar (round GIF) */}
-      <Tooltip title="VOX Assistant" arrow placement="top">
+  // --- Dock launcher (right edge) ---
+  const DockLauncher = () =>
+    minimized ? (
+      <Tooltip title="Open VOX Assistant" placement="left">
         <Box
-          role="button"
-          tabIndex={0}
-          aria-label="Open VOX Assistant"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              void onAvatarClick();
-            }
+          onClick={() => {
+            setMinimized(false);
+            setOpen(true);
           }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onClick={() => void onAvatarClick()}
-          onMouseEnter={onMouseEnter}
-          onMouseLeave={onMouseLeave}
           sx={{
-            ...positioning,
-            zIndex: 1300,
-            width: AVATAR_SIZE,
-            height: AVATAR_SIZE,
-            borderRadius: "50%",
-            overflow: "hidden",
-            cursor: dragging ? "grabbing" : "grab",
-            outline: "2px solid #E0E0E0",
-            bgcolor: "#fff",
+            position: "fixed",
+            top: "50%",
+            right: 12,
+            transform: "translateY(-50%)",
+            width: 52,
+            height: 52,
+            borderRadius: "26px",
+            background: "#ffffff",
+            border: "1px solid rgba(0,0,0,0.08)",
+            boxShadow: 3,
             display: "grid",
             placeItems: "center",
-            transformOrigin: "center",
-            transition: "transform 120ms ease, box-shadow 120ms ease",
-            transform: `${baseTransform} scale(${scale})`,
-            boxShadow: dragging || hovering ? 4 : 0,
-            willChange: "transform",
+            cursor: "pointer",
+            zIndex: 1300,
           }}
         >
-          <Box
-            component="img"
-            src={gifSrc}
-            alt="assistant"
-            sx={{ width: "100%", height: "100%", objectFit: "cover" }}
-          />
+          <ChatBubbleIcon />
         </Box>
       </Tooltip>
+    ) : null;
 
-      {/* Chat window (auto-sizes up to MAX_MESSAGES_HEIGHT) */}
-      <Paper
-        elevation={6}
-        sx={{
-          position: anchored ? "absolute" : "fixed",
-          left: 0,
-          top: 0,
-          transform: `translate3d(${pos.x + AVATAR_SIZE + 12}px, ${pos.y}px, 0) ${
-            open ? "scale(1)" : "scale(0.9)"
-          }`,
-          transformOrigin: "left top",
-          opacity: open ? 1 : 0,
-          pointerEvents: open ? "auto" : "none",
-          transition: "opacity 180ms ease, transform 180ms ease",
-          p: 1.5,
-          borderRadius: 2,
-          bgcolor: "#fff",
-          zIndex: 1300,
-          width: CHAT_WIDTH,
-          willChange: "transform, opacity",
-        }}
-      >
-        <Box
-          ref={messagesBoxRef}
+  return (
+    <>
+      {/* Right-edge dock (only when minimized) */}
+      <DockLauncher />
+
+      {/* Avatar (hidden when minimized) */}
+      {!minimized && (
+        <Tooltip title="VOX Assistant" arrow placement="top">
+          <Box
+            role="button"
+            tabIndex={0}
+            aria-label="Open VOX Assistant"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                void onAvatarClick();
+              }
+            }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onClick={() => void onAvatarClick()}
+            onMouseEnter={onMouseEnter}
+            onMouseLeave={onMouseLeave}
+            sx={{
+              ...positioning,
+              zIndex: 1300,
+              width: AVATAR_SIZE,
+              height: AVATAR_SIZE,
+              borderRadius: "50%",
+              overflow: "hidden",
+              cursor: dragging ? "grabbing" : "grab",
+              outline: "2px solid #E0E0E0",
+              bgcolor: "#fff",
+              display: "grid",
+              placeItems: "center",
+              transformOrigin: "center",
+              transition: "transform 120ms ease, box-shadow 120ms ease",
+              transform: `${baseTransform} scale(${scale})`,
+              boxShadow: dragging || hovering ? 4 : 0,
+              willChange: "transform",
+            }}
+          >
+            <Box
+              component="img"
+              src={gifSrc}
+              alt="assistant"
+              sx={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          </Box>
+        </Tooltip>
+      )}
+
+      {/* Chat window (hidden when minimized) */}
+      {!minimized && (
+        <Paper
+          elevation={6}
           sx={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 1,
-            // Let the box grow with content, but cap at MAX_MESSAGES_HEIGHT
-            maxHeight: MAX_MESSAGES_HEIGHT,
-            minHeight: MIN_MESSAGES_HEIGHT,
-            overflowY: "auto",
-            pr: 0.5,
-            pb: 1,
+            position: anchored ? "absolute" : "fixed",
+            left: 0,
+            top: 0,
+            transform: `translate3d(${pos.x + AVATAR_SIZE + 12}px, ${pos.y}px, 0) ${
+              open ? "scale(1)" : "scale(0.9)"
+            }`,
+            transformOrigin: "left top",
+            opacity: open ? 1 : 0,
+            pointerEvents: open ? "auto" : "none",
+            transition: "opacity 180ms ease, transform 180ms ease",
+            p: 1.5,
+            borderRadius: 2,
+            bgcolor: "#fff",
+            zIndex: 1300,
+            width: CHAT_WIDTH,
+            willChange: "transform, opacity",
           }}
         >
-          {messages.map((m) => (
-            <Bubble key={m.id} from={m.from}>
-              {m.text}
-            </Bubble>
-          ))}
-          {typing && (
-            <Bubble from="bot">
-              <Dots />
-            </Bubble>
-          )}
-        </Box>
+          {/* Header row with minimize */}
+          <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
+            <Typography variant="subtitle2" sx={{ flex: 1 }}>
+              VOX Assistant
+            </Typography>
+            <Tooltip title="Minimize">
+              <IconButton
+                size="small"
+                onClick={() => {
+                  setOpen(false);
+                  setMinimized(true);
+                }}
+              >
+                <MinimizeIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
 
-        <TextField
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="Type your prompt…"
-          fullWidth
-          size="small"
-          multiline
-          maxRows={6} // allow a bit more text before growing
-          sx={{
-            "& .MuiOutlinedInput-root": {
-              borderRadius: 9999,
-              "& fieldset": { borderColor: "#1976d2" },
-              "&:hover fieldset": { borderColor: "#1976d2" },
-              "&.Mui-focused fieldset": { borderColor: "#1976d2" },
-            },
-          }}
-          InputProps={{
-            endAdornment: (
-              <InputAdornment position="end">
-                <IconButton
-                  aria-label="send"
-                  onClick={() => void submit()}
-                  disabled={!input.trim()}
-                  edge="end"
-                  size="small"
-                >
-                  <SendIcon />
-                </IconButton>
-              </InputAdornment>
-            ),
-          }}
-        />
-      </Paper>
+          <Box
+            ref={messagesBoxRef}
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 1,
+              maxHeight: MAX_MESSAGES_HEIGHT,
+              minHeight: MIN_MESSAGES_HEIGHT,
+              overflowY: "auto",
+              pr: 0.5,
+              pb: 1,
+            }}
+          >
+            {messages.map((m) => (
+              <Bubble key={m.id} from={m.from}>
+                {m.text}
+              </Bubble>
+            ))}
+            {typing && (
+              <Bubble from="bot">
+                <Dots />
+              </Bubble>
+            )}
+          </Box>
+
+          <TextField
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="Type your prompt…"
+            fullWidth
+            size="small"
+            multiline
+            maxRows={6}
+            sx={{
+              "& .MuiOutlinedInput-root": {
+                borderRadius: 9999,
+                "& fieldset": { borderColor: "#1976d2" },
+                "&:hover fieldset": { borderColor: "#1976d2" },
+                "&.Mui-focused fieldset": { borderColor: "#1976d2" },
+              },
+            }}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton
+                    aria-label="send"
+                    onClick={() => void submit()}
+                    disabled={!input.trim()}
+                    edge="end"
+                    size="small"
+                  >
+                    <SendIcon />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+        </Paper>
+      )}
     </>
   );
 };
