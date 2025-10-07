@@ -1,16 +1,41 @@
-Easy win—wrap the minimize `IconButton` in a MUI `Tooltip`.
+You’re getting two tooltips because the avatar itself has a Tooltip (“VOX Assistant”) and the minimize button has its own. When you hover the minimize button, the parent tooltip also fires.
 
-### On the avatar (overlay mini button)
+Fix: temporarily disable the avatar tooltip while the mouse is over the minimize button.
 
-Replace your current overlay button with:
+### Minimal patch
+
+1. Add a state flag:
+
+```tsx
+const [suppressAvatarTooltip, setSuppressAvatarTooltip] = React.useState(false);
+```
+
+2. On the **avatar** tooltip, wire that flag:
+
+```tsx
+<Tooltip
+  title="VOX Assistant"
+  arrow
+  placement="top"
+  disableHoverListener={suppressAvatarTooltip}
+  enterDelay={250}
+  leaveDelay={100}
+>
+  {/* avatar box ... */}
+</Tooltip>
+```
+
+3. On the **minimize IconButton**, toggle the flag on hover:
 
 ```tsx
 <Tooltip title="minimise" arrow placement="top">
   <IconButton
     aria-label="minimise"
     size="small"
+    onMouseEnter={() => setSuppressAvatarTooltip(true)}
+    onMouseLeave={() => setSuppressAvatarTooltip(false)}
     onClick={(e) => {
-      e.stopPropagation(); // don’t open chat
+      e.stopPropagation();
       setOpen(false);
       setMinimized(true);
     }}
@@ -35,23 +60,4 @@ Replace your current overlay button with:
 </Tooltip>
 ```
 
-### (Optional) Chat header minimise button too
-
-If you want the same hover text there:
-
-```tsx
-<Tooltip title="minimise" arrow>
-  <IconButton
-    aria-label="minimise"
-    size="small"
-    onClick={() => {
-      setOpen(false);
-      setMinimized(true);
-    }}
-  >
-    <MinimizeIcon fontSize="small" />
-  </IconButton>
-</Tooltip>
-```
-
-That’s it—hovering either button will show “minimise”.
+That’s it—when you hover the minimize button, only “minimise” shows; the “VOX Assistant” tooltip stays suppressed.
