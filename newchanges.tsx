@@ -1,63 +1,72 @@
-You’re getting two tooltips because the avatar itself has a Tooltip (“VOX Assistant”) and the minimize button has its own. When you hover the minimize button, the parent tooltip also fires.
+Nice! Here’s a tiny patch to show a friendly 2-line greeting the first time the assistant is opened.
 
-Fix: temporarily disable the avatar tooltip while the mouse is over the minimize button.
+### 1) Add state + greeter
 
-### Minimal patch
-
-1. Add a state flag:
+Drop these near your other hooks:
 
 ```tsx
-const [suppressAvatarTooltip, setSuppressAvatarTooltip] = React.useState(false);
+// Has the greeting already been shown?
+const greetedRef = React.useRef(false);
+
+const greetIfNeeded = () => {
+  if (greetedRef.current) return;
+  greetedRef.current = true;
+
+  setTyping(true);
+
+  // 1) "Hi there"
+  setTimeout(() => {
+    setMessages((m) => [
+      ...m,
+      { id: crypto.randomUUID(), from: "bot", text: "Hi there" },
+    ]);
+  }, 250);
+
+  // 2) "I am your Assistant..." on the next line (as a new bubble)
+  setTimeout(() => {
+    setMessages((m) => [
+      ...m,
+      {
+        id: crypto.randomUUID(),
+        from: "bot",
+        text: "I am your Assistant, you can ask any VOX related query",
+      },
+    ]);
+    setTyping(false);
+  }, 1100);
+};
 ```
 
-2. On the **avatar** tooltip, wire that flag:
+### 2) Call the greeter when the avatar opens the chat
+
+Change your `onAvatarClick` to trigger the greeting **only when opening**:
 
 ```tsx
-<Tooltip
-  title="VOX Assistant"
-  arrow
-  placement="top"
-  disableHoverListener={suppressAvatarTooltip}
-  enterDelay={250}
-  leaveDelay={100}
->
-  {/* avatar box ... */}
-</Tooltip>
+const onAvatarClick = async () => {
+  try {
+    await ensureSessionNow();
+  } catch {/* ignore */}
+  const willOpen = !open;
+  setOpen(willOpen);
+  setMinimized(false);
+  if (willOpen) greetIfNeeded();
+};
 ```
 
-3. On the **minimize IconButton**, toggle the flag on hover:
+### 3) Also greet when restoring from the dock (if you have a dock restore)
+
+If you have a `restoreFromDock` function, add:
 
 ```tsx
-<Tooltip title="minimise" arrow placement="top">
-  <IconButton
-    aria-label="minimise"
-    size="small"
-    onMouseEnter={() => setSuppressAvatarTooltip(true)}
-    onMouseLeave={() => setSuppressAvatarTooltip(false)}
-    onClick={(e) => {
-      e.stopPropagation();
-      setOpen(false);
-      setMinimized(true);
-    }}
-    sx={{
-      position: "absolute",
-      top: 4,
-      right: 4,
-      width: 28,
-      height: 28,
-      bgcolor: "background.paper",
-      color: "text.primary",
-      border: "1px solid",
-      borderColor: "divider",
-      boxShadow: 2,
-      zIndex: 2,
-      pointerEvents: "auto",
-      "&:hover": { bgcolor: "grey.50" },
-    }}
-  >
-    <MinimizeIcon fontSize="inherit" />
-  </IconButton>
-</Tooltip>
+await ensureSessionNow();
+setMinimized(false);
+setOpen(true);
+greetIfNeeded();   // <-- add this line
 ```
 
-That’s it—when you hover the minimize button, only “minimise” shows; the “VOX Assistant” tooltip stays suppressed.
+That’s it. Now, the first time the user clicks the FloatingAssistant, the chat window will type a beat of dots and then show:
+
+* Hi there
+* I am your Assistant, you can ask any VOX related query
+
+(You can tweak the delays `250` and `1100` ms to taste.)
