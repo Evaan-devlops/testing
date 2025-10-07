@@ -13,39 +13,33 @@ import SendIcon from "@mui/icons-material/Send";
 import { saveData } from "../services/apiService"; // adjust path if needed
 
 type Props = {
-  /** Round GIF source */
   gifSrc: string;
-  /** AppBar (or any header) element ref to compute initial anchor position */
   anchorRef: React.RefObject<HTMLElement>;
-  /** If Header has already created a session, pass it down */
   sessionId?: number;
-  /**
-   * Call to lazily create (or retrieve cached) session in Header.
-   * We'll call this when the avatar is first clicked if sessionId isn't present.
-   */
   ensureSession?: () => Promise<number>;
 };
 
 type Message = { id: string; from: "user" | "bot"; text: string };
 
 type VoxMessage = {
-  msg_id?: number;
-  usr_session_id?: number;
-  msg_type_id?: number;
   msg_text?: string;
   msg?: string;
   // other fields ignored
 };
 
-type VoxChatResponse = {
-  status_code?: number;
-  status?: string;
-  result?: string; // sometimes holds a JSON string: {"role":"assistant","content":"..."}
-  message?: VoxMessage[];
-};
+type VoxChatResponse =
+  | {
+      status_code?: number;
+      status?: string;
+      result?: string;
+      message?: VoxMessage[] | VoxMessage | null;
+    }
+  | any;
 
-const AVATAR_SIZE = 56; // px
-const CHAT_WIDTH = 320; // px
+const AVATAR_SIZE = 56;
+const CHAT_WIDTH = 420;           // wider chat
+const MAX_MESSAGES_HEIGHT = "60vh"; // window grows until this, then scrolls
+const MIN_MESSAGES_HEIGHT = 120;    // minimum visible height in px
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
@@ -55,26 +49,25 @@ const FloatingAssistant: React.FC<Props> = ({
   sessionId: sessionIdProp,
   ensureSession,
 }) => {
-  // --- layout & animation state ---
-  const [anchored, setAnchored] = React.useState(true); // absolute vs fixed
+  // layout / animation
+  const [anchored, setAnchored] = React.useState(true);
   const [open, setOpen] = React.useState(false);
-
-  // Rendered (smoothed) position
   const [pos, setPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  // Target position (immediate)
   const targetPos = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-
   const [dragging, setDragging] = React.useState(false);
   const [hovering, setHovering] = React.useState(false);
   const dragOffset = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const rafId = React.useRef<number | null>(null);
 
-  // --- chat state ---
+  // chat state
   const [input, setInput] = React.useState("");
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [typing, setTyping] = React.useState(false);
 
-  // --- session wiring (from Header) ---
+  // dynamic sizing: measure messages area
+  const messagesBoxRef = React.useRef<HTMLDivElement | null>(null);
+
+  // session
   const [sessionId, setSessionId] = React.useState<number | null>(sessionIdProp ?? null);
   React.useEffect(() => {
     if (typeof sessionIdProp === "number" && sessionIdProp !== sessionId) {
@@ -83,11 +76,9 @@ const FloatingAssistant: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionIdProp]);
 
-  // ----- Initial anchor: center on AppBar bottom border -----
+  // initial anchor to AppBar bottom border (or restore saved)
   React.useLayoutEffect(() => {
     if (!anchorRef.current) return;
-
-    // If a previously saved avatar position exists, restore it and use fixed positioning.
     const saved = localStorage.getItem("vox-avatar-pos");
     if (saved) {
       const p = JSON.parse(saved) as { x: number; y: number };
@@ -96,7 +87,6 @@ const FloatingAssistant: React.FC<Props> = ({
       setAnchored(false);
       return;
     }
-
     const rect = anchorRef.current.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2 - AVATAR_SIZE / 2;
     const onBorderY = rect.bottom - AVATAR_SIZE / 2;
@@ -105,12 +95,12 @@ const FloatingAssistant: React.FC<Props> = ({
     setPos(start);
   }, [anchorRef]);
 
-  // ----- Smooth position animator (requestAnimationFrame + lerp) -----
+  // smooth animator
   React.useEffect(() => {
     let running = true;
     const animate = () => {
       if (!running) return;
-      const k = 0.25; // smoothing factor: larger => snappier
+      const k = 0.25;
       const nx = pos.x + (targetPos.current.x - pos.x) * k;
       const ny = pos.y + (targetPos.current.y - pos.y) * k;
       const done = Math.hypot(targetPos.current.x - nx, targetPos.current.y - ny) < 0.1;
@@ -122,11 +112,10 @@ const FloatingAssistant: React.FC<Props> = ({
       running = false;
       if (rafId.current) cancelAnimationFrame(rafId.current);
     };
-    // run once
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-anchor on window resize when still anchored to header
+  // re-anchor on resize if still anchored
   React.useEffect(() => {
     if (!anchored) return;
     const onResize = () => {
@@ -141,7 +130,7 @@ const FloatingAssistant: React.FC<Props> = ({
     return () => window.removeEventListener("resize", onResize);
   }, [anchored, anchorRef]);
 
-  // ----- Pointer-based dragging (smooth + clamped) -----
+  // dragging
   const onPointerDown = (e: React.PointerEvent) => {
     (e.target as Element).setPointerCapture?.(e.pointerId);
     setDragging(true);
@@ -159,28 +148,24 @@ const FloatingAssistant: React.FC<Props> = ({
   const onPointerUp = (e: React.PointerEvent) => {
     setDragging(false);
     (e.target as Element).releasePointerCapture?.(e.pointerId);
-    // persist last position
     localStorage.setItem("vox-avatar-pos", JSON.stringify(targetPos.current));
   };
 
-  // Hover state (for tooltip + “ready to drag” scale)
   const onMouseEnter = () => setHovering(true);
   const onMouseLeave = () => setHovering(false);
 
-  // --- click to open; ensure session exists first ---
   const onAvatarClick = async () => {
     if (!sessionId && ensureSession) {
       try {
         const sid = await ensureSession();
         setSessionId(sid);
       } catch {
-        // swallow; UI will still open, and submit() will error nicely if no session
+        // ignore—submit() warns if missing
       }
     }
     setOpen((v) => !v);
   };
 
-  // --- Enter to send ---
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -188,7 +173,17 @@ const FloatingAssistant: React.FC<Props> = ({
     }
   };
 
-  // ----- Animated typing dots (bot) -----
+  // auto-scroll to the most recent message
+  React.useEffect(() => {
+    const el = messagesBoxRef.current;
+    if (!el) return;
+    // allow DOM to paint, then scroll
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [messages, typing, open]);
+
+  // typing dots
   const Dots = () => (
     <Box sx={{ display: "inline-flex", gap: "4px", alignItems: "center" }}>
       {[0, 1, 2].map((i) => (
@@ -208,7 +203,6 @@ const FloatingAssistant: React.FC<Props> = ({
     </Box>
   );
 
-  // ----- Chat bubble -----
   const Bubble: React.FC<{ from: "user" | "bot"; children: React.ReactNode }> = ({
     from,
     children,
@@ -231,19 +225,25 @@ const FloatingAssistant: React.FC<Props> = ({
     </Box>
   );
 
-  // ----- Submit: send user text -> create chat API -----
+  // helper to normalize API "message" into an array
+  const normalizeMessagesArray = (m: VoxChatResponse["message"]): VoxMessage[] => {
+    if (!m) return [];
+    if (Array.isArray(m)) return m;
+    // if backend sometimes returns a single object instead of array
+    if (typeof m === "object") return [m as VoxMessage];
+    return [];
+    };
+
   const submit = async () => {
     const text = input.trim();
     if (!text) return;
 
-    // push user bubble immediately
     const userMsg: Message = { id: crypto.randomUUID(), from: "user", text };
     setMessages((m) => [...m, userMsg]);
     setInput("");
     setTyping(true);
 
     try {
-      // make sure session exists
       let sid = sessionId;
       if (!sid && ensureSession) {
         sid = await ensureSession();
@@ -251,10 +251,9 @@ const FloatingAssistant: React.FC<Props> = ({
       }
       if (!sid) throw new Error("Missing session_id");
 
-      // Payload shape from your spec, replacing the placeholder with user input
       const payload = {
         chat_completion_message: {
-          session_id: sid, // <-- from header
+          session_id: sid,
           engine: "gpt-4o",
           messages: [
             {
@@ -275,53 +274,49 @@ const FloatingAssistant: React.FC<Props> = ({
         },
       };
 
-      // Endpoint with the flags you showed
       const url =
         "/vox/auth/service/chats?is_gen_ai_studio_client=false&regenerate_response=false&response_stream=false&route_to_genai=false&assistant=true";
 
-      // NOTE: saveData is not generic; coerce result to any and normalize
       const res: any = await saveData(url, payload);
       const json: VoxChatResponse = (res?.data ?? res) as VoxChatResponse;
 
-      // 1) Primary: take first message[].msg_text (or .msg)
-      let botText = "";
+      // robust extraction:
+      // 1) first available msg_text/msg from message[]
+      const arr = normalizeMessagesArray(json?.message);
       const first =
-        json.message?.find((m) => (m.msg_text ?? m.msg)?.toString().trim()) ??
-        json.message?.[0];
+        arr.find((m) => (m.msg_text ?? m.msg)?.toString().trim()) ?? arr[0];
+      let botText = first ? (first.msg_text ?? first.msg ?? "").toString().trim() : "";
 
-      if (first) botText = (first.msg_text ?? first.msg ?? "").toString().trim();
-
-      // 2) Fallback: parse top-level `result` JSON string -> { role, content }
-      if (!botText && typeof json.result === "string") {
+      // 2) fallback: parse top-level "result" JSON string { content }
+      if (!botText && typeof json?.result === "string") {
         try {
           const r = JSON.parse(json.result);
           if (r && typeof r.content === "string") botText = r.content.trim();
         } catch {
-          /* ignore parse error */
+          /* ignore */
         }
       }
 
-      // 3) Last fallback
       if (!botText) botText = "No response text returned by the service.";
 
       setTyping(false);
-      const botMsg: Message = { id: crypto.randomUUID(), from: "bot", text: botText };
-      setMessages((m) => [...m, botMsg]);
+      setMessages((m) => [...m, { id: crypto.randomUUID(), from: "bot", text: botText }]);
     } catch (err: any) {
       setTyping(false);
-      const botMsg: Message = {
-        id: crypto.randomUUID(),
-        from: "bot",
-        text: `⚠️ Failed to create chat: ${err?.message ?? "Unknown error"}`,
-      };
-      setMessages((m) => [...m, botMsg]);
+      setMessages((m) => [
+        ...m,
+        {
+          id: crypto.randomUUID(),
+          from: "bot",
+          text: `⚠️ Failed to create chat: ${err?.message ?? "Unknown error"}`,
+        },
+      ]);
     }
   };
 
-  // ----- Positioning + scale rules -----
+  // positioning + scale
   const baseTransform = `translate3d(${pos.x}px, ${pos.y}px, 0)`;
   const scale = dragging ? 1.14 : hovering ? 1.08 : 1;
-
   const positioning = {
     position: anchored ? ("absolute" as const) : ("fixed" as const),
     left: 0,
@@ -376,7 +371,7 @@ const FloatingAssistant: React.FC<Props> = ({
         </Box>
       </Tooltip>
 
-      {/* Chat window (slides open from avatar) */}
+      {/* Chat window (auto-sizes up to MAX_MESSAGES_HEIGHT) */}
       <Paper
         elevation={6}
         sx={{
@@ -399,13 +394,14 @@ const FloatingAssistant: React.FC<Props> = ({
         }}
       >
         <Box
+          ref={messagesBoxRef}
           sx={{
             display: "flex",
             flexDirection: "column",
             gap: 1,
-            height: "6lh", // ~6 lines
-            minHeight: 108,
-            maxHeight: 132,
+            // Let the box grow with content, but cap at MAX_MESSAGES_HEIGHT
+            maxHeight: MAX_MESSAGES_HEIGHT,
+            minHeight: MIN_MESSAGES_HEIGHT,
             overflowY: "auto",
             pr: 0.5,
             pb: 1,
@@ -431,7 +427,7 @@ const FloatingAssistant: React.FC<Props> = ({
           fullWidth
           size="small"
           multiline
-          maxRows={3}
+          maxRows={6} // allow a bit more text before growing
           sx={{
             "& .MuiOutlinedInput-root": {
               borderRadius: 9999,
