@@ -52,7 +52,7 @@ const FloatingAssistant: React.FC<Props> = ({
   // layout / animation
   const [anchored, setAnchored] = React.useState(true);
   const [open, setOpen] = React.useState(false);
-  const [minimized, setMinimized] = React.useState(false); // NEW
+  const [minimized, setMinimized] = React.useState(false);
 
   const [pos, setPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const targetPos = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -157,17 +157,23 @@ const FloatingAssistant: React.FC<Props> = ({
   const onMouseEnter = () => setHovering(true);
   const onMouseLeave = () => setHovering(false);
 
-  const onAvatarClick = async () => {
+  const ensureSessionNow = async () => {
     if (!sessionId && ensureSession) {
-      try {
-        const sid = await ensureSession();
-        setSessionId(sid);
-      } catch {
-        // ignore—submit() will error if missing
-      }
+      const sid = await ensureSession();
+      setSessionId(sid);
+      return sid;
+    }
+    return sessionId!;
+  };
+
+  const onAvatarClick = async () => {
+    try {
+      await ensureSessionNow();
+    } catch {
+      /* ignore; submit() warns if missing */
     }
     setOpen((v) => !v);
-    setMinimized(false); // ensure visible if user clicks avatar
+    setMinimized(false);
   };
 
   // Enter to send
@@ -206,11 +212,7 @@ const FloatingAssistant: React.FC<Props> = ({
     setTyping(true);
 
     try {
-      let sid = sessionId;
-      if (!sid && ensureSession) {
-        sid = await ensureSession();
-        setSessionId(sid);
-      }
+      const sid = await ensureSessionNow();
       if (!sid) throw new Error("Missing session_id");
 
       const payload = {
@@ -328,25 +330,42 @@ const FloatingAssistant: React.FC<Props> = ({
     minimized ? (
       <Tooltip title="Open VOX Assistant" placement="left">
         <Box
-          onClick={() => {
-            setMinimized(false);
-            setOpen(true);
+          role="button"
+          tabIndex={0}
+          aria-label="Open VOX Assistant"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              void (async () => {
+                await ensureSessionNow();
+                setMinimized(false);
+                setOpen(true);
+              })();
+            }
           }}
+          onClick={() =>
+            void (async () => {
+              await ensureSessionNow();
+              setMinimized(false);
+              setOpen(true);
+            })()
+          }
           sx={{
             position: "fixed",
-            top: "50%",
+            top: "60%",
             right: 12,
             transform: "translateY(-50%)",
-            width: 52,
-            height: 52,
-            borderRadius: "26px",
+            width: 56,
+            height: 56,
+            borderRadius: "28px",
             background: "#ffffff",
-            border: "1px solid rgba(0,0,0,0.08)",
-            boxShadow: 3,
+            border: "1px solid rgba(0,0,0,0.12)",
+            boxShadow: 4,
             display: "grid",
             placeItems: "center",
             cursor: "pointer",
-            zIndex: 1300,
+            zIndex: 2000,           // ensure it’s above everything
+            pointerEvents: "auto",
           }}
         >
           <ChatBubbleIcon />
@@ -395,8 +414,32 @@ const FloatingAssistant: React.FC<Props> = ({
               transform: `${baseTransform} scale(${scale})`,
               boxShadow: dragging || hovering ? 4 : 0,
               willChange: "transform",
+              position: anchored ? "absolute" : "fixed",
             }}
           >
+            {/* Mini overlay minimize button on the avatar */}
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation(); // don’t open chat
+                setOpen(false);
+                setMinimized(true);
+              }}
+              sx={{
+                position: "absolute",
+                top: -6,
+                right: -6,
+                width: 24,
+                height: 24,
+                bgcolor: "#fff",
+                border: "1px solid rgba(0,0,0,0.12)",
+                boxShadow: 2,
+                "&:hover": { bgcolor: "#fafafa" },
+              }}
+            >
+              <MinimizeIcon fontSize="inherit" />
+            </IconButton>
+
             <Box
               component="img"
               src={gifSrc}
